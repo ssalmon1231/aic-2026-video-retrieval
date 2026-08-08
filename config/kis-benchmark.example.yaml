@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "task": "textual-kis",
+  "query_encoder": {
+    "model_id": "replace-with-verified-encoder-revision",
+    "preprocessing": "replace-with-verified-tokenization-and-prompt"
+  },
+  "queries": [
+    {
+      "query_id": "synthetic-query-001",
+      "ground_truth": {
+        "video_id": "synthetic-video-001",
+        "start": 100,
+        "end": 120
+      }
+    }
+  ]
+}

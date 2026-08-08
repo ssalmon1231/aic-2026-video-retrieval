@@ -1,0 +1,40 @@
+{
+  "kis": {
+    "task": "textual-kis",
+    "ground_truth": {"video_id": "L01_V001", "start": 500, "end": 510},
+    "responses": [
+      {"video_id": "L01_V001", "frame_id": 505},
+      {"video_id": "L01_V001", "frame_id": 600},
+      {"video_id": "L02_V003", "frame_id": 505}
+    ]
+  },
+  "qa": {
+    "task": "qa",
+    "ground_truth": {
+      "video_id": "L05_V005",
+      "start": 800,
+      "end": 900,
+      "answers": ["màu xanh"]
+    },
+    "responses": [
+      {"video_id": "L05_V005", "frame_id": 888, "answer": "màu xanh"},
+      {"video_id": "L05_V005", "frame_id": 888, "answer": "màu trắng"},
+      {"video_id": "L06_V007", "frame_id": 888, "answer": "màu xanh"}
+    ]
+  },
+  "trake": {
+    "task": "trake",
+    "ground_truth": {
+      "video_id": "L10_V010",
+      "intervals": [
+        {"start": 95, "end": 105},
+        {"start": 145, "end": 155},
+        {"start": 195, "end": 205},
+        {"start": 245, "end": 255}
+      ]
+    },
+    "responses": [
+      {"video_id": "L10_V010", "frame_ids": [101, 156, 203, 251]}
+    ]
+  }
+}

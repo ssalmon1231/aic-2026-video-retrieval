@@ -1,0 +1,6 @@
+{
+  "backend": "sentence-transformers",
+  "model_id": "sentence-transformers/clip-ViT-B-32-multilingual-v1",
+  "revision": "58edf8cada9e398793dca955574a48cbb7f18be2",
+  "device": "cuda"
+}

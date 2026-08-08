@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "batch_id": "doanminhtuan-aic25-b1-unverified",
+  "dataset_root": "/kaggle/input/datasets/doanminhtuan",
+  "video_glob": "video-aic/Videos_*/video/*.mp4",
+  "keyframe_glob": "dataset-ai-challenge-keyframe/Keyframes_*/keyframes/**/*.jpg",
+  "mapping_glob": "map-keyframes-aic25-b1/map-keyframes/*.csv",
+  "clip_glob": "clip-features-32-aic25-b1/clip-features-32/*.npy",
+  "object_glob": "objects-aic25-b1-zip/objects/**/*.json",
+  "metadata_glob": "media-info-aic25-b1/media-info/*.json",
+  "output_manifest": "/kaggle/working/aic-audit/manifest.json",
+  "output_report": "/kaggle/working/aic-audit/report.json",
+  "expected_clip_dimension": 512,
+  "frame_id_source": "timestamp",
+  "verify_frame_mapping": true,
+  "frame_mapping_samples": 3,
+  "frame_mapping_max_mae": 20.0,
+  "fail_on_warning": false
+}

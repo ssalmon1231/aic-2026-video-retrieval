@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Local tool state.
+.claude-terminal
+
+# Secrets and local credentials.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dataset and generated artifacts stay on Kaggle.
+data/
+dataset/
+artifacts/
+indexes/
+cache/
+outputKaggle/
+*.npy
+*.npz
+*.faiss
+*.mp4
+*.avi
+*.mkv
+*.webm
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.zip

@@ -1,0 +1,8 @@
+{
+  "manifest_path": "/kaggle/working/aic-audit/manifest.json",
+  "dataset_root": "/kaggle/input/datasets/doanminhtuan",
+  "output_path": "/kaggle/working/aic-index/clip-flat-ip.npz",
+  "feature_glob": "clip-features-32-aic25-b1/clip-features-32/{video_id}.npy",
+  "model_id": "clip-ViT-B-32-unverified",
+  "preprocessing": "provided-features-unverified"
+}
