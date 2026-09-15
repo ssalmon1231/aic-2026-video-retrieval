@@ -137,8 +137,22 @@ class QwenPlanner:
         return self._last_generated_tokens
 
     def plan(self, query: str, vocabulary: Sequence[str]) -> ContrastivePlan:
+        content = self.generate_json(
+            _planner_prompt(query, vocabulary),
+            max_new_tokens=MAX_NEW_TOKENS,
+        )
+        return parse_plan(content, vocabulary)
+
+    def generate_json(self, prompt: str, *, max_new_tokens: int) -> str:
         self._last_generated_tokens = 0
-        prompt = _planner_prompt(query, vocabulary)
+        if (
+            not isinstance(prompt, str)
+            or not prompt.strip()
+            or isinstance(max_new_tokens, bool)
+            or not isinstance(max_new_tokens, int)
+            or max_new_tokens <= 0
+        ):
+            raise RerankingError("planner generation inputs are invalid")
         try:
             rendered = self._tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt}],
@@ -151,12 +165,11 @@ class QwenPlanner:
                 output = self._model.generate(
                     **inputs,
                     do_sample=False,
-                    max_new_tokens=MAX_NEW_TOKENS,
+                    max_new_tokens=max_new_tokens,
                 )
             generated = output[0][input_length:]
             self._last_generated_tokens = int(generated.shape[0])
-            content = self._tokenizer.decode(generated, skip_special_tokens=True)
-            return parse_plan(content, vocabulary)
+            return self._tokenizer.decode(generated, skip_special_tokens=True)
         except RerankingError:
             raise
         except (AttributeError, KeyError, RuntimeError, TypeError, ValueError) as error:

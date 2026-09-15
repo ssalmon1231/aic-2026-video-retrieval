@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "raw_candidate_depth": 500,
+  "auxiliary_candidate_depth": 300,
+  "raw_weight": 2.0,
+  "holistic_weight": 1.5,
+  "clause_weight": 1.0,
+  "ordered_event_weight": 1.0,
+  "rrf_k": 60,
+  "planner_budget_seconds": 3.0,
+  "temporal_enabled": true,
+  "temporal_max_frame_gap": 9000,
+  "temporal_gap_penalty": 0.25,
+  "temporal_full_coverage_bonus": 1.0,
+  "temporal_video_boost_weight": 1.0,
+  "ocr_enabled": true,
+  "ocr_candidate_depth": 100,
+  "ocr_weight": 0.75,
+  "ocr_fuzzy_threshold": 0.72
+}

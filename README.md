@@ -4,9 +4,9 @@ Hệ thống retrieval chạy local-code/data-on-Kaggle cho vòng sơ tuyển AI
 
 Phạm vi hiện tại:
 
-- Request 1 — Textual KIS: exact NumPy index, English/Vietnamese query encoder candidates, deterministic ranking và evaluator.
-- Request 2 — Automatic Q&A: đang triển khai pipeline prompt-only, tự retrieve, localize, answer, verify và rank.
-- Request 3 — TRAKE: thiết kế sau khi Request 1–2 có baseline dùng được.
+- Request 1 — Textual KIS: pipeline opt-in gồm raw Vietnamese retrieval, native-English holistic/clause/event routes, deterministic RRF, temporal ordering và private OCR exact-text retrieval.
+- Request 2 — Automatic Q&A: baseline offline đã có parser, evidence windows, exact-frame sampling, strict answer protocol, fail-closed engine, pipeline API và CLI. VLM/T4 gate chưa chạy.
+- Request 3 — TRAKE: baseline offline đã có parser, per-event retrieval adapter, same-video monotonic alignment, gap penalty, canonical frame IDs và CLI.
 
 ## Quy tắc dữ liệu
 
@@ -24,20 +24,62 @@ source .venv/Scripts/activate  # Git Bash trên Windows
 python -m pip install -e .
 ```
 
-Optional extras:
-
-```bash
-python -m pip install -e ".[video]"
-python -m pip install -e ".[clip]"
-python -m pip install -e ".[multilingual]"
-```
-
 ## Kiểm thử
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall src scripts
 ```
+
+## Request 2/3 local baseline
+
+Q&A nhận một raw prompt. Không có cờ nhập answer, frame hoặc rank:
+
+```bash
+python scripts/answer_query.py \
+  --index /path/to/index.npz \
+  --manifest /path/to/manifest.json \
+  --dataset-root /path/to/dataset \
+  --encoder-config /path/to/encoder.json \
+  --config config/qa-baseline.yaml \
+  --prompt "Mô tả cảnh. Câu hỏi: Người đó cầm gì?" \
+  --output /path/to/qa-result.json
+```
+
+Không có VLM được promote, output Q&A rỗng theo fail-closed contract. UI có thể gọi `QaPipeline.answer_query(raw_text)`.
+
+TRAKE nhận raw prompt chứa event theo thứ tự, phân cách bằng `|` hoặc `sau đó`:
+
+```bash
+python scripts/align_events.py \
+  --index /path/to/index.npz \
+  --encoder-config /path/to/encoder.json \
+  --config config/trake-baseline.yaml \
+  --prompt "Sự kiện một sau đó sự kiện hai" \
+  --output /path/to/trake-result.json
+```
+
+UI có thể gọi `parse_trake_query()` và `retrieve_and_align()` trực tiếp. Cả hai baseline trả canonical `video_id` và zero-based `original_frame_id`.
+
+## Rehearsal query pack và CSV nộp bài
+
+Giữ query test, index, manifest, config encoder và output nộp bài trong private/Kaggle runtime. Runner đọc folder query có tên `*-kis.txt`, `*-qa.txt`, `*-trake.txt`, tạo ZIP chứa thư mục `submission/` và report aggregate không có raw prompt, answer hoặc frame ID:
+
+```bash
+python scripts/run_query_pack.py \
+  --query-dir /private/THUNGHIEM-bo-de-thi \
+  --index /private/index.npz \
+  --manifest /private/manifest.json \
+  --dataset-root /private/dataset \
+  --encoder-config /private/encoder.json \
+  --retrieval-config config/retrieval-baseline.yaml \
+  --qa-config config/qa-baseline.yaml \
+  --trake-config config/trake-baseline.yaml \
+  --output /private/team-round.zip \
+  --report /private/submission-report.json
+```
+
+Mỗi CSV là UTF-8, comma-separated, không header, tối đa 100 dòng. Q&A fail-closed tạo CSV rỗng nếu chưa có answer engine được promote. TRAKE đọc event dạng `E1: ... E2: ...` hoặc `sau đó`/`|`.
 
 ## Request 1 trên Kaggle
 
@@ -51,32 +93,32 @@ python scripts/prepare_kaggle_bundle.py
 
 Bundle sinh tại `dist/`; thư mục này không thuộc Git.
 
-## Request 2 — phân chia công việc
+## Hướng dẫn Git & Đẩy code lên GitHub
 
-Thiết kế chính: [`plans/260803-1208-aic2026-video-retrieval-system/phase-07-q-a-pipeline.md`](plans/260803-1208-aic2026-video-retrieval-system/phase-07-q-a-pipeline.md)
+Khi làm việc trên nhánh tính năng hoặc chuẩn bị cập nhật code lên repository GitHub:
 
-Thứ tự triển khai:
+1. **Kiểm tra trạng thái các file:**
+   ```bash
+   git status
+   ```
+   *(Đảm bảo các file dataset, video, `.npz`, `.npy`, `*-bo-de-thi/`, `submission/` đều đã được `.gitignore` bảo vệ và không bị stage nhầm).*
 
-1. **7A — Contracts/query routing:** frozen Q&A contracts, parser/router Việt–Anh, no-human public API.
-2. **7B — Retrieval/evidence:** multi-variant exact retrieval, temporal clustering, exact-frame windows/sampling.
-3. **7C — T4 model gate:** so sánh VLM candidates trên Kaggle NVIDIA T4; chưa pin production model trước gate.
-4. **7D–7H — Integration:** answer engine, verifier/ranking, optional OCR/ASR, CLI/notebook và benchmark.
+2. **Stage và commit các thay đổi:**
+   ```bash
+   git add .
+   git commit -m "feat: implement hybrid retrieval, QA baseline, TRAKE alignment, and evaluation tools"
+   ```
 
-Nhánh gợi ý:
+3. **Push lên GitHub:**
+   ```bash
+   # Push nhánh hiện tại lên GitHub (ví dụ nhánh feature/request1-hybrid-retrieval)
+   git push -u origin feature/request1-hybrid-retrieval
 
-```text
-feature/request2-7a-contracts
-feature/request2-7b-evidence
-experiment/request2-7c-vlm-gate
-```
-
-Không sửa cùng file trên hai nhánh nếu chưa thống nhất ownership. Mỗi pull request cần:
-
-- scope nhỏ, không kèm dataset/output;
-- tests cho behavior mới;
-- `python -m unittest discover -s tests -v` pass;
-- `python -m compileall src scripts` pass;
-- mô tả contract/public API thay đổi nếu có.
+   # Hoặc nếu muốn đẩy lên master / main:
+   # git checkout master
+   # git merge feature/request1-hybrid-retrieval
+   # git push origin master
+   ```
 
 ## Tài liệu
 
@@ -87,4 +129,5 @@ Không sửa cùng file trên hai nhánh nếu chưa thống nhất ownership. M
 
 ## Trạng thái
 
-Request 1 baseline code và Kaggle workflow đã có. Request 2 Phase 7A–7B là mốc code tiếp theo. Dataset audit/index/model gates thật vẫn chạy trên Kaggle.
+Request 1 có hybrid baseline nhưng chưa có locked private held-out metrics. Request 2/3 có offline core usable cho UI integration; real VLM answer quality, T4 compatibility, trial-web integration và competition accuracy chưa xác minh.
+

@@ -93,18 +93,67 @@ def retrieve_kis(
         except (OSError, RuntimeError, TypeError, ValueError):
             hits = baseline_hits
     exact_ranks = {hit.row: rank for rank, hit in enumerate(baseline_hits, start=1)}
-    raw = tuple(
-        RetrievalCandidate(
-            score=hit.score,
-            raw_rank=exact_ranks[hit.row],
-            video_id=hit.video_id,
-            keyframe_id=hit.keyframe_id,
-            original_frame_id=hit.original_frame_id,
-            keyframe_path=hit.keyframe_path,
-        )
-        for hit in hits
+    return retrieval_result_from_hits(
+        index,
+        hits,
+        config,
+        raw_ranks=exact_ranks,
     )
-    ranked = temporal_deduplicate(raw, config.temporal_window)
+
+
+def retrieval_result_from_hits(
+    index: ExactIndex,
+    hits: tuple[SearchHit, ...],
+    config: RetrievalConfig,
+    *,
+    raw_ranks: dict[int, int] | None = None,
+) -> RetrievalResult:
+    """Build canonical KIS responses from a validated ranked index shortlist."""
+
+    if not isinstance(hits, tuple):
+        raise RetrievalError("ranked hits must be a tuple")
+    ranks = (
+        raw_ranks
+        if raw_ranks is not None
+        else {hit.row: rank for rank, hit in enumerate(hits, start=1)}
+    )
+    if set(ranks) != {hit.row for hit in hits}:
+        raise RetrievalError("raw ranks must cover every unique ranked hit")
+    if (
+        any(isinstance(rank, bool) or not isinstance(rank, int) or rank <= 0 for rank in ranks.values())
+        or len(set(ranks.values())) != len(ranks)
+    ):
+        raise RetrievalError("raw ranks must be unique positive integers")
+
+    seen_rows: set[int] = set()
+    raw: list[RetrievalCandidate] = []
+    for hit in hits:
+        if not isinstance(hit, SearchHit) or hit.row in seen_rows:
+            raise RetrievalError("ranked hits must contain unique SearchHit rows")
+        if not math.isfinite(hit.score) or not 0 <= hit.row < len(index.keyframes):
+            raise RetrievalError("ranked hit score or row is invalid")
+        record = index.keyframes[hit.row]
+        if (
+            hit.video_id != record.video_id
+            or hit.keyframe_id != record.keyframe_id
+            or hit.original_frame_id != record.original_frame_id
+            or hit.keyframe_path != record.keyframe_path
+        ):
+            raise RetrievalError("ranked hit provenance disagrees with index lookup")
+        seen_rows.add(hit.row)
+        raw.append(
+            RetrievalCandidate(
+                score=hit.score,
+                raw_rank=ranks[hit.row],
+                video_id=hit.video_id,
+                keyframe_id=hit.keyframe_id,
+                original_frame_id=hit.original_frame_id,
+                keyframe_path=hit.keyframe_path,
+            )
+        )
+
+    raw_candidates = tuple(raw)
+    ranked = temporal_deduplicate(raw_candidates, config.temporal_window)
     ranked = _deduplicate_response_identities(ranked)
     ranked = limit_per_video(ranked, config.max_results_per_video)
     final = ranked[: config.result_limit]
@@ -113,7 +162,7 @@ def retrieve_kis(
         for candidate in final
     )
     validate_ranked_responses(responses)
-    return RetrievalResult(raw, final, responses)
+    return RetrievalResult(raw_candidates, final, responses)
 
 
 def _validate_reranked_hits(

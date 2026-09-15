@@ -9,6 +9,7 @@ from .contracts import Task
 
 CUTOFFS = (1, 5, 20, 50, 100)
 MAX_RESPONSES = 100
+MAX_QA_ANSWER_CHARS = 100
 
 
 class EvaluationError(ValueError):
@@ -81,6 +82,10 @@ class QaResponse:
         _require_response_identity(self.video_id, (self.frame_id,))
         if not self.answer.strip():
             raise EvaluationError("Q&A response answer must not be empty")
+        if len(self.answer) > MAX_QA_ANSWER_CHARS:
+            raise EvaluationError(
+                f"Q&A response answer exceeds {MAX_QA_ANSWER_CHARS} characters"
+            )
 
 
 @dataclass(frozen=True, slots=True)

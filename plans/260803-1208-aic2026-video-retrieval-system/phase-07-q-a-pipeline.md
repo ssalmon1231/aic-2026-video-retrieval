@@ -1,7 +1,7 @@
 ---
 phase: 7
 title: "Automatic Q&A Pipeline"
-status: pending
+status: paused
 priority: P1
 effort: "6-10 team-days plus Kaggle model gates"
 dependencies: [2, 3, 4]
@@ -18,6 +18,8 @@ optional_dependencies: [6]
 - Research: `../reports/research-260808-2105-automatic-qa-request-2-report.md`
 
 ## Overview
+
+**Trạng thái hiện tại:** Phase 7A contracts/query routing đã implement và verify local. Phase 7B–7C tạm dừng theo quyết định ưu tiên Request 1; chỉ tiếp tục sau Request 1 B0–B3 integration/review và locked private Kaggle promotion gate.
 
 Mở rộng Request 1 retriever thành Request 2 tự động end-to-end. Người dùng chỉ nhập raw prompt chứa mô tả sự kiện và câu hỏi. Pipeline tự tìm video/khoảnh khắc, tự sinh answer, tự verify/rank và xuất `1–100` triples `<video_id, frame_id, answer>`. Không có bước chọn frame, nhập/sửa answer hoặc chỉnh rank bởi người dùng trong critical path.
 

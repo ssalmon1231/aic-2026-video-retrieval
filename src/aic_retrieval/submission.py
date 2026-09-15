@@ -1,10 +1,14 @@
-"""Strict JSON loaders for AIC ground truth and ranked responses."""
+"""Strict JSON loaders and CSV/ZIP exporters for AIC submissions."""
 
 from __future__ import annotations
 
+import csv
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from .contracts import Task
 from .evaluation import (
@@ -12,6 +16,7 @@ from .evaluation import (
     FrameInterval,
     KisGroundTruth,
     KisResponse,
+    MAX_RESPONSES,
     QaGroundTruth,
     QaResponse,
     TrakeGroundTruth,
@@ -89,6 +94,90 @@ def parse_query(payload: dict[str, Any]) -> tuple[Task, GroundTruth, tuple[Respo
 
     validate_ranked_responses(responses)
     return task, ground_truth, responses
+
+
+def write_submission_csv(path: str | Path, responses: Sequence[Response]) -> Path:
+    """Write one headerless UTF-8 CSV required for one official query."""
+    destination = Path(path)
+    if destination.suffix.lower() != ".csv":
+        raise EvaluationError("submission output must use the .csv extension")
+    if not destination.name or destination.name != Path(destination.name).name:
+        raise EvaluationError("submission CSV must use a plain filename")
+    _validate_submission_responses(responses)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.writer(stream, lineterminator="\n")
+        for response in responses:
+            writer.writerow(_csv_row(response))
+    return destination
+
+
+def build_submission_zip(
+    destination: str | Path,
+    query_responses: Mapping[str, Sequence[Response]],
+) -> Path:
+    """Build official ZIP with headerless per-query CSVs inside `submission/`."""
+    target = Path(destination)
+    if target.suffix.lower() != ".zip":
+        raise EvaluationError("submission package must use the .zip extension")
+    if not query_responses:
+        raise EvaluationError("submission package requires at least one query CSV")
+    names = tuple(query_responses)
+    if len(set(names)) != len(names):
+        raise EvaluationError("submission CSV filenames must be unique")
+    for name in names:
+        _validate_submission_filename(name)
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    try:
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "submission"
+            for name, responses in query_responses.items():
+                write_submission_csv(root / name, responses)
+            with ZipFile(temporary, "w", ZIP_DEFLATED, compresslevel=9) as archive:
+                for csv_path in sorted(root.glob("*.csv")):
+                    archive.write(csv_path, csv_path.relative_to(root.parent).as_posix())
+        temporary.replace(target)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return target
+
+
+def _validate_submission_responses(responses: Sequence[Response]) -> None:
+    validate_ranked_responses(responses)
+    if any(not isinstance(response, (KisResponse, QaResponse, TrakeResponse)) for response in responses):
+        raise EvaluationError("submission responses have an unsupported type")
+    for response in responses:
+        _validate_submission_video_id(response.video_id)
+        if isinstance(response, QaResponse) and len(response.answer) > 100:
+            raise EvaluationError("Q&A response answer exceeds 100 characters")
+
+
+def _csv_row(response: Response) -> tuple[str | int, ...]:
+    if isinstance(response, KisResponse):
+        return response.video_id, response.frame_id
+    if isinstance(response, QaResponse):
+        return response.video_id, response.frame_id, response.answer
+    if isinstance(response, TrakeResponse):
+        return (response.video_id, *response.frame_ids)
+    raise EvaluationError("submission response has an unsupported type")
+
+
+def _validate_submission_video_id(video_id: str) -> None:
+    if video_id.endswith(".mp4"):
+        raise EvaluationError("submission video_id must not include .mp4")
+    if any(character in video_id for character in ",\r\n"):
+        raise EvaluationError("submission video_id contains CSV-special characters")
+
+
+def _validate_submission_filename(name: str) -> None:
+    path = Path(name)
+    if not isinstance(name, str) or path.name != name or path.suffix.lower() != ".csv":
+        raise EvaluationError("submission CSV filename must be a plain .csv filename")
 
 
 def _parse_task(value: Any) -> Task:
