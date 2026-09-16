@@ -12,6 +12,7 @@ from unittest import mock
 import numpy as np
 
 from aic_retrieval.contracts import KeyframeRecord
+from aic_retrieval.hybrid_retrieval import HybridRetrievalConfig
 from aic_retrieval.index import ExactIndex, IndexMetadata, save_index
 from aic_retrieval.query import (
     QueryBatchEncoding,
@@ -430,6 +431,278 @@ class RetrievalTests(unittest.TestCase):
             self.assertEqual(payload["encoder"]["backend"], "sentence-transformers")
             self.assertEqual(payload["encoder"]["runtime_class"], "SentenceTransformer")
             self.assertIsNone(payload["encoder"]["tokenizer_use_fast"])
+
+    def test_disabled_hybrid_cli_skips_auxiliary_models(self) -> None:
+        from scripts import search
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "index.npz"
+            encoder_path = root / "encoder.json"
+            english_path = root / "english.json"
+            hybrid_path = root / "hybrid.json"
+            config_path = root / "retrieval.json"
+            output_path = root / "result.json"
+            save_index(test_index(), index_path)
+            encoder_path.write_text("{}", encoding="utf-8")
+            english_path.write_text("{}", encoding="utf-8")
+            hybrid_path.write_text('{"enabled": false}', encoding="utf-8")
+            config_path.write_text(
+                json.dumps({"candidate_depth": 4, "result_limit": 2}),
+                encoding="utf-8",
+            )
+            provenance = QueryEncoderProvenance(
+                model_id="multilingual",
+                revision="5" * 40,
+                tokenizer_class=None,
+                tokenizer_use_fast=None,
+                normalization="Unicode NFC",
+                output_dtype="float32",
+                normalized=True,
+                image_features="private-safe",
+                backend="sentence-transformers",
+                runtime_class="SentenceTransformer",
+            )
+            encoded = QueryEncoding(
+                np.array([1.0, 0.5, 0.0, 0.0], dtype=np.float32),
+                provenance,
+            )
+            private_query = "private disabled hybrid query"
+            with mock.patch.object(
+                search,
+                "load_encoder_config",
+                return_value=SimpleNamespace(device="cuda"),
+            ) as load_encoder, mock.patch.object(
+                search,
+                "load_hybrid_config",
+                return_value=SimpleNamespace(enabled=False),
+            ), mock.patch.object(
+                search,
+                "encode_text",
+                return_value=encoded,
+            ), mock.patch.object(
+                search,
+                "QueryEncoderRuntime",
+                side_effect=AssertionError("auxiliary runtime must not load"),
+            ), mock.patch.object(
+                search,
+                "QwenQueryPlanner",
+                side_effect=AssertionError("planner must not load"),
+            ):
+                self.assertEqual(
+                    search.main(
+                        [
+                            "--index",
+                            str(index_path),
+                            "--query-text",
+                            private_query,
+                            "--encoder-config",
+                            str(encoder_path),
+                            "--hybrid-config",
+                            str(hybrid_path),
+                            "--english-encoder-config",
+                            str(english_path),
+                            "--config",
+                            str(config_path),
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertEqual(load_encoder.call_count, 1)
+            content = output_path.read_text(encoding="utf-8")
+            payload = json.loads(content)
+            self.assertNotIn(private_query, content)
+            self.assertFalse(payload["hybrid"]["applied"])
+            self.assertEqual(payload["hybrid"]["semantic_lists"], 1)
+
+    def test_hybrid_startup_failure_returns_private_safe_baseline(self) -> None:
+        from scripts import search
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "index.npz"
+            encoder_path = root / "encoder.json"
+            english_path = root / "english.json"
+            hybrid_path = root / "hybrid.json"
+            config_path = root / "retrieval.json"
+            output_path = root / "result.json"
+            save_index(test_index(), index_path)
+            for path in (encoder_path, english_path, hybrid_path):
+                path.write_text("{}", encoding="utf-8")
+            config_path.write_text(
+                json.dumps({"candidate_depth": 4, "result_limit": 2}),
+                encoding="utf-8",
+            )
+            provenance = QueryEncoderProvenance(
+                model_id="multilingual",
+                revision="5" * 40,
+                tokenizer_class=None,
+                tokenizer_use_fast=None,
+                normalization="Unicode NFC",
+                output_dtype="float32",
+                normalized=True,
+                image_features="private-safe",
+                backend="sentence-transformers",
+                runtime_class="SentenceTransformer",
+            )
+            private_query = "private hybrid startup failure query"
+            private_failure = "private english model path"
+
+            class Runtime:
+                calls = 0
+
+                def __init__(self, config, *, expected_dimension: int) -> None:
+                    Runtime.calls += 1
+                    if Runtime.calls == 2:
+                        raise search.QueryEncodingError(private_failure)
+                    self.expected_dimension = expected_dimension
+
+                def encode(self, texts):
+                    return QueryBatchEncoding(
+                        np.array([[1.0, 0.5, 0.0, 0.0]], dtype=np.float32),
+                        provenance,
+                    )
+
+            with mock.patch.object(
+                search,
+                "load_encoder_config",
+                return_value=SimpleNamespace(device="cuda"),
+            ), mock.patch.object(
+                search,
+                "load_hybrid_config",
+                return_value=HybridRetrievalConfig(
+                    enabled=True,
+                    raw_candidate_depth=4,
+                    auxiliary_candidate_depth=4,
+                ),
+            ), mock.patch.object(search, "QueryEncoderRuntime", Runtime):
+                self.assertEqual(
+                    search.main(
+                        [
+                            "--index",
+                            str(index_path),
+                            "--query-text",
+                            private_query,
+                            "--encoder-config",
+                            str(encoder_path),
+                            "--hybrid-config",
+                            str(hybrid_path),
+                            "--english-encoder-config",
+                            str(english_path),
+                            "--config",
+                            str(config_path),
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    0,
+                )
+            content = output_path.read_text(encoding="utf-8")
+            payload = json.loads(content)
+            baseline = retrieve_kis(
+                test_index(),
+                np.array([1.0, 0.5, 0.0, 0.0], dtype=np.float32),
+                RetrievalConfig(candidate_depth=4, result_limit=2),
+            )
+            self.assertNotIn(private_query, content)
+            self.assertNotIn(private_failure, content)
+            self.assertEqual(payload["responses"], baseline.to_dict()["responses"])
+            self.assertTrue(payload["hybrid"]["fallback"])
+            self.assertGreaterEqual(payload["startup_elapsed_ms"], 0.0)
+
+    def test_corrupt_ocr_startup_returns_private_safe_baseline(self) -> None:
+        from scripts import search
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "index.npz"
+            encoder_path = root / "encoder.json"
+            english_path = root / "english.json"
+            hybrid_path = root / "hybrid.json"
+            config_path = root / "retrieval.json"
+            output_path = root / "result.json"
+            ocr_path = root / "ocr"
+            save_index(test_index(), index_path)
+            for path in (encoder_path, english_path, hybrid_path):
+                path.write_text("{}", encoding="utf-8")
+            ocr_path.mkdir()
+            (ocr_path / "ocr-artifact.json").write_text("private corrupt bytes", encoding="utf-8")
+            config_path.write_text(
+                json.dumps({"candidate_depth": 4, "result_limit": 2}),
+                encoding="utf-8",
+            )
+            provenance = QueryEncoderProvenance(
+                model_id="multilingual",
+                revision="5" * 40,
+                tokenizer_class=None,
+                tokenizer_use_fast=None,
+                normalization="Unicode NFC",
+                output_dtype="float32",
+                normalized=True,
+                image_features="private-safe",
+                backend="sentence-transformers",
+                runtime_class="SentenceTransformer",
+            )
+            private_query = "private corrupt OCR query"
+
+            class Runtime:
+                def __init__(self, config, *, expected_dimension: int) -> None:
+                    self.expected_dimension = expected_dimension
+
+                def encode(self, texts):
+                    return QueryBatchEncoding(
+                        np.array([[1.0, 0.5, 0.0, 0.0]], dtype=np.float32),
+                        provenance,
+                    )
+
+            with mock.patch.object(
+                search,
+                "load_encoder_config",
+                return_value=SimpleNamespace(device="cuda"),
+            ), mock.patch.object(
+                search,
+                "load_hybrid_config",
+                return_value=HybridRetrievalConfig(
+                    enabled=True,
+                    raw_candidate_depth=4,
+                    auxiliary_candidate_depth=4,
+                ),
+            ), mock.patch.object(search, "QueryEncoderRuntime", Runtime), mock.patch.object(
+                search,
+                "QwenQueryPlanner",
+                return_value=object(),
+            ):
+                self.assertEqual(
+                    search.main(
+                        [
+                            "--index",
+                            str(index_path),
+                            "--query-text",
+                            private_query,
+                            "--encoder-config",
+                            str(encoder_path),
+                            "--hybrid-config",
+                            str(hybrid_path),
+                            "--english-encoder-config",
+                            str(english_path),
+                            "--ocr-artifact",
+                            str(ocr_path),
+                            "--config",
+                            str(config_path),
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    0,
+                )
+            content = output_path.read_text(encoding="utf-8")
+            payload = json.loads(content)
+            self.assertNotIn(private_query, content)
+            self.assertNotIn("private corrupt bytes", content)
+            self.assertTrue(payload["hybrid"]["fallback"])
+            self.assertFalse(payload["hybrid"]["ocr_available"])
 
     def test_text_cli_reranker_status_is_private_safe(self) -> None:
         from scripts import search

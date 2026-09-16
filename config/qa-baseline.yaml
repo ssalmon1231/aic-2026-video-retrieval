@@ -1,0 +1,11 @@
+{
+  "window_seconds": 4.0,
+  "max_windows": 20,
+  "max_seeds_per_video": 3,
+  "samples_per_window": 5,
+  "near_seed_radius": 0,
+  "refine_window_seconds": 1.0,
+  "max_refined_windows": 20,
+  "retrieval_depth": 500,
+  "use_event_variant": true
+}

@@ -117,17 +117,50 @@ PYTHONPATH=/kaggle/working/aic-retrieval/src python scripts/search.py \
   --output /kaggle/working/aic-results/kis-vector-search.json
 ```
 
-## 7. Reusable query runtime và optional reranker
+## 7. Reusable Request 1 hybrid runtime
 
-Interactive notebook phải load exact index và `QueryEncoderRuntime` một lần, sau đó gọi `search_query(text)` cho nhiều query. Không chạy audit, rebuild index, reload model hoặc spawn `scripts/search.py` cho mỗi query.
+Interactive notebook load exact index, Vietnamese encoder, native English encoder và planner đúng một lần, sau đó gọi `search_query(text)` cho nhiều query. Không chạy audit, rebuild index, reload model hoặc spawn `scripts/search.py` cho mỗi query.
 
-`config/reranker-disabled.example.yaml` là mặc định committed. Khi disabled, output phải giống exact baseline. Chỉ bật trong private experiment sau khi tạo runtime config dưới `/kaggle/working` với pinned Qwen revision và explicit nonzero weights từ dev split; không commit weights chưa được benchmark.
+`config/hybrid-retrieval.example.yaml` committed với `"enabled": false`. Disabled CLI path chỉ load raw Vietnamese encoder và trả exact B0; không load English encoder, planner hoặc OCR artifact. Tạo runtime copy dưới `/kaggle/working` rồi bật riêng cho private experiment.
 
-Reranker chỉ xử lý exact top-500. Planner warm sinh một positive, tối đa ba negatives và bounded object labels; generated content chỉ tồn tại trong memory. Deterministic generation dùng compact JSON contract và cap `96` generated tokens. Notebook/output JSON chỉ được ghi trạng thái aggregate `applied`, `fallback`, `circuit_open`, `planner_elapsed_ms`, `scoring_elapsed_ms` cùng bounded generated-token counts; không print/serialize raw query, prompt, generated plan, object labels/paths/detections.
+Hybrid flow:
 
-Trước smoke query, warm planner hai lần ngoài `ContrastiveReranker`: call đầu khởi động model/CUDA, call sau dùng fixed public synthetic visual query tiếng Việt với cùng empty vocabulary của Contrastive Text-only. Discard cả hai plans; chỉ tạo reranker sau khi cả hai parse thành công. Warm-up timing/token counts là startup diagnostics, không thay thế post-warm-up latency gate.
+1. raw Vietnamese CLIP list;
+2. bounded English holistic/clause/event lists;
+3. weighted RRF candidate union;
+4. monotonic same-video temporal boost cho ordered events;
+5. optional private OCR exact/fuzzy evidence.
 
-Planner load/generation/scoring failure trả exact baseline. Load/warm-up failure đánh dấu aggregate `fallback=true`, `circuit_open=true`; runtime giữ baseline đến khi restart. Planner vượt 1,5 giây trả baseline cho query hiện tại, mở in-memory circuit breaker; query sau giữ baseline đến khi restart runtime. Không hard-cancel CUDA generation bằng thread timeout.
+Planner strict JSON, deterministic `do_sample=False`, bounded 1 holistic, 4 clauses, 3 ordered events và 4 exact-text strings. Raw query, generated plan và OCR strings chỉ tồn tại trong private process/artifact. Output chỉ ghi aggregate flags/counts/timings.
+
+```bash
+PYTHONPATH=/kaggle/working/aic-retrieval/src python scripts/search.py \
+  --index /kaggle/working/aic-index/clip-flat-ip.npz \
+  --query-text "<private-query>" \
+  --encoder-config /kaggle/working/query-encoder-vietnamese.json \
+  --english-encoder-config /kaggle/working/query-encoder-english.json \
+  --hybrid-config /kaggle/working/hybrid-retrieval.json \
+  --ocr-artifact /kaggle/input/private-ocr/ocr-artifact \
+  --config config/retrieval-baseline.yaml \
+  --output /kaggle/working/aic-results/kis-hybrid.json
+```
+
+`--ocr-artifact` optional. Missing artifact neutral. Corrupt/checksum/manifest/index mismatch fail closed before retrieval. Auxiliary runtime failure returns exact raw B0 responses.
+
+### Build private OCR artifact
+
+Chỉ build trên official keyframes/private Kaggle T4. PaddleOCR không thuộc core dependency vì package/API/model compatibility chưa được xác minh trên T4.
+
+```bash
+PYTHONPATH=/kaggle/working/aic-retrieval/src python scripts/build_ocr_artifact.py \
+  --index /kaggle/working/aic-index/clip-flat-ip.npz \
+  --dataset-root /kaggle/input/<official-dataset> \
+  --output /kaggle/working/ocr-artifact \
+  --device gpu:0 \
+  --model-revision <verified-model-revision>
+```
+
+Builder mặc định thử `PP-OCRv5_mobile_det` + `latin_PP-OCRv5_mobile_rec`. Trước full build phải smoke exact installed PaddleOCR version, constructor/predict schema, model revision/hash, Vietnamese diacritics, throughput, VRAM và batch size trên T4. Artifact gồm descriptor + JSONL OCR records; giữ private, không commit hoặc public.
 
 ## 8. Benchmark KIS
 
@@ -149,9 +182,39 @@ PYTHONPATH=/kaggle/working/aic-retrieval/src python scripts/benchmark_kis.py \
   --output /kaggle/working/aic-results/kis-benchmark.json
 ```
 
-Đo bốn ablations trên cùng locked split: baseline, object-only, contrastive-only, object + contrastive. Full-pipeline timer bao gồm text encoding, exact search, planner, reranking và dedup. Sau warmup ghi p50/p95, startup, planner/scoring timing, peak GPU/host memory. Target T4 chưa xác minh: base encode + exact search `< 500 ms`, object `< 100 ms`, contrastive `< 200 ms`, planner `< 1,5 s`, total p95 `< 2 s`. Một smoke query đạt gate chỉ xác minh notebook path; promotion vẫn cần locked private multi-query p50/p95 và R@k/Final Score.
+Vector B0 command phía trên vẫn dùng được. Full raw-text B0–B3 benchmark dùng private ID→text mapping riêng:
 
-Dimension khớp không chứng minh encoder tương thích. Chỉ private held-out R@k/Final Score được promote encoder/reranker. Runner chỉ nhận query ID; aggregate report không chứa raw query, plan hoặc ground-truth content.
+```bash
+PYTHONPATH=/kaggle/working/aic-retrieval/src python scripts/benchmark_kis.py \
+  --index /kaggle/working/aic-index/clip-flat-ip.npz \
+  --private-query-texts /kaggle/working/private/query-texts.json \
+  --encoder-config /kaggle/working/query-encoder-vietnamese.json \
+  --english-encoder-config /kaggle/working/query-encoder-english.json \
+  --hybrid-config /kaggle/working/hybrid-retrieval.json \
+  --ocr-artifact /kaggle/input/private-ocr/ocr-artifact \
+  --query-set /kaggle/working/private/kis-queries.json \
+  --retrieval-config config/retrieval-baseline.yaml \
+  --name request1-b3 \
+  --code-revision <git-revision-or-source-sha256> \
+  --output /kaggle/working/aic-results/kis-benchmark-b3.json
+```
+
+Private mapping schema:
+
+```json
+{"version":1,"queries":{"query-id":"raw private text"}}
+```
+
+IDs phải khớp chính xác query set. Runner public chỉ nhận query ID; aggregate report không chứa raw text, generated plan, OCR strings hoặc ground truth.
+
+Đo tuần tự trên cùng locked split:
+
+- B0 raw multilingual baseline;
+- B1 native-English holistic/clauses + RRF;
+- B2 ordered temporal alignment;
+- B3 private OCR exact-text fusion.
+
+Sau warmup ghi R@1/R@5/R@20/R@50/R@100, Final Score, p50/p95, candidate recall, fallback count, peak GPU/host memory. Dimension khớp không chứng minh encoder compatibility. Chỉ locked private held-out evidence được promote; R@1/R@5 guardrails, T4 no-OOM và response identity checks phải pass. Contact sheet chỉ smoke path.
 
 ## 9. Artifacts cần giữ
 
@@ -159,7 +222,8 @@ Dimension khớp không chứng minh encoder tương thích. Chỉ private held-
 - `aic-audit/report.json`
 - `aic-audit/manifest.json`
 - verified index metadata, archive size
-- `kis-benchmark.json`
+- `kis-benchmark-b0.json` đến `kis-benchmark-b3.json`
+- private `ocr-artifact/` nếu B3 được chạy
 - source bundle SHA-256 và code revision
 
-Không export sample frames, official/private query labels, raw query vectors, credentials hoặc private metadata vào git/public output.
+Không export sample frames, official/private query labels, raw query vectors/texts, generated plans, OCR strings, credentials hoặc private metadata vào git/public output.

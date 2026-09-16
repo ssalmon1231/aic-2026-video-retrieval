@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
@@ -22,6 +24,7 @@ from aic_retrieval.benchmark import (
 )
 from aic_retrieval.contracts import KeyframeRecord
 from aic_retrieval.evaluation import FrameInterval, KisGroundTruth
+from aic_retrieval.hybrid_retrieval import HybridRetrievalConfig
 from aic_retrieval.index import ExactIndex, IndexMetadata, save_index
 from aic_retrieval.retrieval import RetrievalConfig, retrieve_kis
 
@@ -208,6 +211,12 @@ class KisBenchmarkTests(unittest.TestCase):
                 query_runner=lambda query_id: object(),
                 **keywords,
             )
+        with self.assertRaisesRegex(BenchmarkError, "runner_config requires"):
+            run_kis_benchmark(
+                *arguments,
+                runner_config={"mode": "invalid"},
+                **keywords,
+            )
 
     def test_rejects_duplicate_empty_ids_and_wrong_task(self) -> None:
         duplicate_queries = (
@@ -307,6 +316,306 @@ class KisBenchmarkTests(unittest.TestCase):
             np.savez(path, vectors=np.eye(2, dtype=np.float32))
             with self.assertRaisesRegex(BenchmarkError, "single .npy array"):
                 load_query_vectors(path)
+
+    def test_private_query_text_loader_is_strict_and_process_private(self) -> None:
+        from scripts.benchmark_kis import load_private_query_texts
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "private-queries.json"
+            private_query = "private exact visible-text query 79H-6072"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "queries": {
+                            "query-1": private_query,
+                            "query-2": "private second query",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_private_query_texts(path)
+            self.assertEqual(loaded["query-1"], private_query)
+
+            for payload in (
+                {"version": 1, "queries": {}},
+                {"version": 2, "queries": {"query-1": private_query}},
+                {"version": 1, "queries": {"": private_query}},
+                {"version": 1, "queries": {"query-1": " "}},
+                {"version": 1, "queries": {}, "private_labels": []},
+            ):
+                with self.subTest(payload=payload):
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                    with self.assertRaises(BenchmarkError):
+                        load_private_query_texts(path)
+
+    def test_private_raw_text_cli_runs_disabled_hybrid_as_b0(self) -> None:
+        from scripts import benchmark_kis
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "index.npz"
+            query_set_path = root / "queries.json"
+            private_path = root / "private-queries.json"
+            retrieval_path = root / "retrieval.json"
+            output_path = root / "benchmark.json"
+            save_index(test_index(), index_path)
+            write_query_set(query_set_path)
+            private_queries = {
+                "query-1": "private raw query one",
+                "query-2": "private raw query two",
+            }
+            private_path.write_text(
+                json.dumps({"version": 1, "queries": private_queries}),
+                encoding="utf-8",
+            )
+            retrieval_path.write_text(
+                json.dumps({"candidate_depth": 3, "result_limit": 3}),
+                encoding="utf-8",
+            )
+            vectors = {
+                private_queries["query-1"]: np.array([1.0, 0.0, 0.0]),
+                private_queries["query-2"]: np.array([0.0, 0.0, 1.0]),
+            }
+
+            class Runtime:
+                def __init__(self, config, *, expected_dimension: int) -> None:
+                    self.expected_dimension = expected_dimension
+
+                def encode(self, texts):
+                    text = tuple(texts)[0]
+                    return SimpleNamespace(
+                        vectors=np.array([vectors[text]], dtype=np.float32),
+                        provenance=None,
+                    )
+
+            with mock.patch.object(
+                benchmark_kis,
+                "load_encoder_config",
+                return_value=SimpleNamespace(
+                    device="cuda",
+                    backend="sentence-transformers",
+                    model_id="multilingual",
+                    revision="5" * 40,
+                ),
+            ) as load_encoder, mock.patch.object(
+                benchmark_kis,
+                "load_hybrid_config",
+                return_value=HybridRetrievalConfig(
+                    enabled=False,
+                    raw_candidate_depth=3,
+                    auxiliary_candidate_depth=3,
+                ),
+            ), mock.patch.object(
+                benchmark_kis,
+                "QueryEncoderRuntime",
+                Runtime,
+            ), mock.patch.object(
+                benchmark_kis,
+                "HybridTextRetriever",
+                side_effect=AssertionError("hybrid retriever must not load"),
+            ), mock.patch.object(
+                benchmark_kis,
+                "QwenQueryPlanner",
+                side_effect=AssertionError("planner must not load"),
+            ):
+                self.assertEqual(
+                    benchmark_kis.main(
+                        [
+                            "--index",
+                            str(index_path),
+                            "--private-query-texts",
+                            str(private_path),
+                            "--encoder-config",
+                            str(root / "encoder.json"),
+                            "--english-encoder-config",
+                            str(root / "english.json"),
+                            "--hybrid-config",
+                            str(root / "hybrid.json"),
+                            "--query-set",
+                            str(query_set_path),
+                            "--retrieval-config",
+                            str(retrieval_path),
+                            "--name",
+                            "private-b0",
+                            "--code-revision",
+                            "test-revision",
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertEqual(load_encoder.call_count, 1)
+            content = output_path.read_text(encoding="utf-8")
+            for text in private_queries.values():
+                self.assertNotIn(text, content)
+            payload = json.loads(content)
+            self.assertEqual(
+                payload["experiment"]["metrics"]["final_score"],
+                1.0,
+            )
+            runner = payload["experiment"]["config"]["runner"]
+            self.assertEqual(runner["mode"], "raw-text-baseline")
+            self.assertFalse(runner["hybrid"]["enabled"])
+            self.assertNotIn("english_encoder", runner)
+
+    def test_private_raw_text_cli_uses_ids_and_serializes_no_text(self) -> None:
+        from scripts import benchmark_kis
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            index_path = root / "index.npz"
+            query_set_path = root / "queries.json"
+            private_path = root / "private-queries.json"
+            retrieval_path = root / "retrieval.json"
+            output_path = root / "benchmark.json"
+            save_index(test_index(), index_path)
+            write_query_set(query_set_path)
+            private_queries = {
+                "query-1": "private raw query one",
+                "query-2": "private raw query two",
+            }
+            private_path.write_text(
+                json.dumps({"version": 1, "queries": private_queries}),
+                encoding="utf-8",
+            )
+            retrieval_path.write_text(
+                json.dumps({"candidate_depth": 3, "result_limit": 3}),
+                encoding="utf-8",
+            )
+            vectors = {
+                private_queries["query-1"]: np.array([1.0, 0.0, 0.0]),
+                private_queries["query-2"]: np.array([0.0, 0.0, 1.0]),
+            }
+            received: list[str] = []
+
+            class Runtime:
+                def __init__(self, config, *, expected_dimension: int) -> None:
+                    self.expected_dimension = expected_dimension
+
+                def encode(self, texts):
+                    text = tuple(texts)[0]
+                    received.append(text)
+                    return SimpleNamespace(
+                        vectors=np.array([vectors[text]], dtype=np.float32),
+                        provenance=None,
+                    )
+
+            class Retriever:
+                def __init__(
+                    self,
+                    index,
+                    retrieval_config,
+                    hybrid_config,
+                    multilingual,
+                    english,
+                    planner,
+                    *,
+                    ocr_index=None,
+                ) -> None:
+                    self.index = index
+                    self.config = retrieval_config
+                    self.runtime = multilingual
+
+                def retrieve(self, text):
+                    encoded = self.runtime.encode([text])
+                    return SimpleNamespace(
+                        retrieval=retrieve_kis(
+                            self.index,
+                            encoded.vectors[0],
+                            self.config,
+                        ),
+                        status=SimpleNamespace(
+                            applied=True,
+                            fallback=False,
+                            planner_fallback=False,
+                            ocr_applied=False,
+                        ),
+                    )
+
+            with mock.patch.object(
+                benchmark_kis,
+                "load_encoder_config",
+                return_value=SimpleNamespace(
+                    device="cuda",
+                    backend="sentence-transformers",
+                    model_id="multilingual",
+                    revision="5" * 40,
+                ),
+            ), mock.patch.object(
+                benchmark_kis,
+                "load_hybrid_config",
+                return_value=HybridRetrievalConfig(
+                    enabled=True,
+                    raw_candidate_depth=3,
+                    auxiliary_candidate_depth=3,
+                ),
+            ), mock.patch.object(
+                benchmark_kis,
+                "QueryEncoderRuntime",
+                Runtime,
+            ), mock.patch.object(
+                benchmark_kis,
+                "QwenQueryPlanner",
+                return_value=object(),
+            ), mock.patch.object(
+                benchmark_kis,
+                "HybridTextRetriever",
+                Retriever,
+            ):
+                self.assertEqual(
+                    benchmark_kis.main(
+                        [
+                            "--index",
+                            str(index_path),
+                            "--private-query-texts",
+                            str(private_path),
+                            "--encoder-config",
+                            str(root / "encoder.json"),
+                            "--english-encoder-config",
+                            str(root / "english.json"),
+                            "--hybrid-config",
+                            str(root / "hybrid.json"),
+                            "--query-set",
+                            str(query_set_path),
+                            "--retrieval-config",
+                            str(retrieval_path),
+                            "--name",
+                            "private-synthetic",
+                            "--code-revision",
+                            "test-revision",
+                            "--output",
+                            str(output_path),
+                        ]
+                    ),
+                    0,
+                )
+            content = output_path.read_text(encoding="utf-8")
+            self.assertEqual(received, list(private_queries.values()))
+            for text in private_queries.values():
+                self.assertNotIn(text, content)
+            self.assertNotIn("ground_truth", content)
+            payload = json.loads(content)
+            self.assertEqual(
+                payload["experiment"]["metrics"]["final_score"],
+                1.0,
+            )
+            runner = payload["experiment"]["config"]["runner"]
+            self.assertEqual(runner["mode"], "hybrid")
+            self.assertTrue(runner["hybrid"]["enabled"])
+            self.assertEqual(runner["english_encoder"]["revision"], "5" * 40)
+            self.assertEqual(
+                runner["outcomes"],
+                {
+                    "applied": 2,
+                    "fallback": 0,
+                    "planner_fallback": 0,
+                    "raw_baseline": 0,
+                    "ocr_applied": 0,
+                },
+            )
 
     def test_cli_writes_parseable_experiment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -12,7 +12,7 @@ optional: true
 
 ## Overview
 
-Đóng khoảng trống CLIP bằng ablation có mục tiêu. Không triển khai toàn bộ modality cùng lúc: Objects/metadata trước vì đã được cung cấp; OCR/ASR/captions chỉ khi failure analysis chứng minh nhu cầu. Vi-ATISO/AIC24 cung cấp modality/API ideas; baseline vẫn là một Python process, không mặc định port microservices hoặc Milvus.
+Đóng khoảng trống CLIP bằng ablation có mục tiêu. Request 1 exact-visible-text failures đã đủ rõ để triển khai private OCR route trước Objects/metadata, nhưng OCR vẫn opt-in và chưa promoted. ASR/captions/VLM chỉ sau failure analysis và T4 gate. Baseline vẫn là một Python process; không port microservices hoặc Milvus.
 
 ## Requirements
 
@@ -61,7 +61,7 @@ Late fusion là mặc định vì feature precompute và query nhanh. Early fusi
 ## Success Criteria
 
 - [ ] Mỗi experiment thay đổi một modality hoặc một fusion decision có thể quy trách nhiệm.
-- [ ] Missing optional artifact không làm retrieval thất bại.
+- [x] Missing private OCR artifact giữ semantic retrieval; corrupt/mismatched artifact fail closed.
 - [ ] Final ranking hiển thị score contribution/provenance theo modality.
 - [ ] Promoted modality tăng held-out Final Score và qua R@1/R@5/resource guardrails.
 - [ ] Default config chỉ bật components đã promote.
@@ -74,6 +74,13 @@ Late fusion là mặc định vì feature precompute và query nhanh. Early fusi
 - OCR/ASR index tăng disk/latency. Chỉ build sau evidence; dùng sparse/text index đơn giản trước.
 - Metadata leakage/noise đẩy sai video lên. Cap contribution; ablate theo query type.
 - Grounding model quá chậm. Shortlist-only; timeout trả lại late-fusion ranking.
+
+## Current implementation state
+
+- `src/aic_retrieval/ocr.py` defines private artifact descriptor/records, normalization, exact inverted lookup and bounded fuzzy search.
+- `scripts/build_ocr_artifact.py` builds canonical records from keyframes; exact PaddleOCR package/model revision remains unpinned until T4 compatibility smoke.
+- Hybrid RRF can recover exact OCR rows absent from semantic lists; fuzzy OCR remains bounded to semantic union.
+- No held-out B3 gain measured. Default hybrid config remains disabled; OCR artifact must not be committed.
 
 ## Rollback
 

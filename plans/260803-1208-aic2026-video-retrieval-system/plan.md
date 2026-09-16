@@ -18,7 +18,7 @@ source: skill
 
 Xây dựng hệ thống code-local, data-on-Kaggle, không phụ thuộc API bên ngoài phục vụ ba loại truy vấn vòng sơ tuyển AIC 2026: Textual KIS, Q&A và TRAKE. Runtime dữ liệu/model chạy cùng Kaggle; local chỉ chạy fixtures/evaluator và artifact nhỏ. Request 2 là automatic end-to-end: người dùng chỉ nhập raw prompt, hệ thống tự retrieve, localize, answer, verify, rank và xuất canonical triples; không có human-in-the-loop trong critical path. Chiến lược: evaluator đúng trước, CLIP retrieval đủ dùng tiếp theo, automatic Q&A sau đó; chỉ promote OCR, ASR, object fusion, VLM hoặc early-fusion khi benchmark chứng minh tăng điểm trong budget.
 
-Plan này chỉ mô tả triển khai. Trọng tâm sản phẩm hiện tại: Request 1 — Textual KIS và Request 2 — Q&A. Phase 1–2 là bước kỹ thuật đầu tiên để khóa data contracts và evaluator; không đồng nghĩa giới hạn sản phẩm ở hai phase này. Request 3 — TRAKE vẫn được thiết kế nhưng triển khai sau khi KIS/Q&A đạt baseline dùng được. Dataset lớn nằm trên Kaggle; không tải hoặc lưu toàn bộ trên máy local. Data audit chạy trong Kaggle; local chỉ giữ code, fixtures và manifest/report nhỏ. Chưa chọn hardware, deadline, giao thức nộp hoặc dịch vụ cloud vì tài liệu nguồn chưa công bố.
+Plan này chỉ mô tả triển khai. Trọng tâm hiện tại là đóng Request 1 — Textual KIS accuracy gate trước khi tiếp tục Request 2. Phase 7A Q&A contracts đã có; Phase 7B–7C tạm dừng. Request 1 local implementation hiện gồm raw Vietnamese B0, English multi-list RRF B1, temporal B2 và private OCR B3; promotion chỉ sau locked held-out Kaggle T4 benchmark. Request 3 — TRAKE vẫn triển khai sau khi KIS/Q&A đạt baseline dùng được. Dataset lớn nằm trên Kaggle; không tải hoặc lưu toàn bộ trên máy local. Data audit chạy trong Kaggle; local chỉ giữ code, fixtures và manifest/report nhỏ. Chưa biết deadline hoặc giao thức nộp vì tài liệu nguồn chưa công bố.
 
 ## Nguồn và mức tin cậy
 
@@ -131,17 +131,17 @@ Mặc định đề xuất: Python, NumPy exact index, pinned multilingual text 
 
 ## Phases
 
-Thứ tự thực hiện hiện tại: `1 → 2/3 → 4 → 7A/7B → 7C model gate → 7D–7H`; Phase 5 UI không block automatic Q&A, Phase 6 chỉ theo failure analysis, Phase 8 sau baseline Request 1–2, Phase 9 sau khi cả ba request sẵn sàng.
+Thứ tự thực hiện hiện tại: `Request 1 B0–B3 integration/review → locked Kaggle T4 benchmark/promotion → 7B → 7C model gate → 7D–7H`; Phase 5 UI không block automatic Q&A, Phase 6 OCR slice đã được triển khai opt-in nhưng chưa promoted, Phase 8 sau baseline Request 1–2, Phase 9 sau khi cả ba request sẵn sàng.
 
 | Phase | Name | Priority | Status |
 |-------|------|----------|--------|
 | 1 | [Requirements and Data Audit](./phase-01-requirements-and-data-audit.md) | P1 | In progress — Kaggle source bundle ready; official data audit pending |
 | 2 | [Evaluation and Experiment Protocol](./phase-02-evaluation-and-experiment-protocol.md) | P1 | Completed |
 | 3 | [Data Ingestion and Indexing](./phase-03-data-ingestion-and-indexing.md) | P1 | In progress — build/verify included in Kaggle bundle; real build/profile pending |
-| 4 | [CLIP Retrieval Baseline](./phase-04-clip-retrieval-baseline.md) | P1 | In progress — benchmark included in Kaggle bundle; encoder/real metrics pending |
+| 4 | [CLIP Retrieval Baseline](./phase-04-clip-retrieval-baseline.md) | P1 | In progress — B0–B2 local implementation/integration present; locked Kaggle metrics pending |
 | 5 | [Retrieval Interface and Submission Workflow](./phase-05-retrieval-interface-and-submission-workflow.md) | P1 | Pending — debug/inspection UI optional for Request 2 runtime |
-| 7 | [Automatic Q&A Pipeline](./phase-07-q-a-pipeline.md) | P1 | Pending — research complete; contracts/evidence implementation next |
-| 6 | [Multimodal Enrichment and Reranking](./phase-06-multimodal-enrichment-and-reranking.md) | P2/optional | Pending |
+| 7 | [Automatic Q&A Pipeline](./phase-07-q-a-pipeline.md) | P1 | Paused after 7A — wait for Request 1 promotion gate |
+| 6 | [Multimodal Enrichment and Reranking](./phase-06-multimodal-enrichment-and-reranking.md) | P2/optional | In progress — private OCR B3 local implementation present; T4/held-out gate pending |
 | 8 | [TRAKE Temporal Alignment](./phase-08-trake-temporal-alignment.md) | P2 | Pending |
 | 9 | [System Optimization and Competition Readiness](./phase-09-system-optimization-and-competition-readiness.md) | P1 after 7/8 | Pending |
 

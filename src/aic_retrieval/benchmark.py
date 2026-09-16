@@ -224,6 +224,7 @@ def run_kis_benchmark(
     code_revision: str,
     index_size_mb: float,
     query_runner: Callable[[str], RetrievalResult] | None = None,
+    runner_config: dict[str, Any] | None = None,
     clock: Callable[[], float] = time.perf_counter,
     memory_reader: Callable[[], float | None] | None = None,
 ) -> KisBenchmarkResult:
@@ -233,6 +234,10 @@ def run_kis_benchmark(
         raise BenchmarkError("index_size_mb must be finite and non-negative")
     if (query_vectors is None) == (query_runner is None):
         raise BenchmarkError("supply exactly one of query_vectors or query_runner")
+    if runner_config is not None and query_runner is None:
+        raise BenchmarkError("runner_config requires query_runner")
+    if runner_config is not None and not isinstance(runner_config, dict):
+        raise BenchmarkError("runner_config must be an object")
     matrix = (
         validate_query_vectors(
             query_vectors,
@@ -285,6 +290,7 @@ def run_kis_benchmark(
             "index": asdict(index.metadata),
             "query_encoder": asdict(query_set.query_encoder),
             "retrieval": asdict(retrieval_config),
+            **({"runner": dict(runner_config)} if runner_config is not None else {}),
         },
         queries=tuple(metrics),
         resources=resources,

@@ -11,13 +11,14 @@ dependencies: [2, 3]
 
 ## Overview
 
-Tạo baseline Request 1 — Textual KIS end-to-end: query text đến top-100 valid frame responses. Dùng ý tưởng CLIP retrieval từ TOMS nhưng rewrite tối thiểu quanh canonical manifest/FAISS; tối ưu ranking và temporal/video diversity trước khi thêm model mới.
+Tạo baseline Request 1 — Textual KIS end-to-end: query text đến top-100 valid frame responses. Exact NumPy raw Vietnamese route là B0 và fallback. Opt-in B1–B3 thêm native-English holistic/clause/event routes, deterministic RRF, monotonic temporal alignment và private OCR exact-text fusion; mặc định giữ tắt đến khi locked held-out benchmark thắng.
 
 ## Requirements
 
 - Functional: encode truy vấn Việt/Anh bằng text encoder tương thích image features.
 - Functional: retrieve candidate pool, rerank, temporal deduplicate/diversify, xuất tối đa 100 results.
-- Functional: hỗ trợ optional ordered subqueries bằng same-video monotonic alignment tuyến tính; single-query path không chịu thêm complexity.
+- Functional: hỗ trợ bounded planner-generated ordered events bằng same-video monotonic alignment; disabled/single-query baseline không load auxiliary models.
+- Functional: exact visible text có private OCR inverted lookup top-N và bounded fuzzy matching trên semantic union.
 - Functional: giữ raw scores/candidates cho error analysis.
 - Non-functional: deterministic với cùng index/config; p95 latency được đo.
 - Non-functional: không gọi LLM/cloud trong baseline.
@@ -68,7 +69,8 @@ Dùng vài prompt templates cố định, audit được; không tạo agent. Ca
 - [x] Validator chấp nhận danh sách 1-100 KIS responses.
 - [x] Raw candidate ranking và final ranking đều truy vết được.
 - [ ] Image features đã empirically match OpenAI CLIP ViT-B/32; repository raw-text path đã nối với pinned revision nhưng còn chờ Kaggle runtime gate và ranked-output comparison.
-- [ ] Ordered-query DP/backpointers deferred; chỉ triển khai sau single-query benchmark và có brute-force oracle.
+- [x] Ordered-event same-video monotonic alignment đã có synthetic tests cho full/partial coverage, reverse order, max gap, ties và representative boost; tác động held-out còn chờ Kaggle.
+- [x] Private OCR artifact/index/search đã có local contract/integrity tests và exact-text first-stage recovery; PaddleOCR package/model T4 compatibility còn chờ smoke.
 - [ ] Temporal dedup đúng deterministic local contract; tác động held-out Final Score chờ dev set Kaggle.
 - [x] Batch benchmark local nhận ordered `.npy` query vectors + labeled KIS query set; xuất R@1/R@5/R@20/R@50/R@100, Final Score, p50/p95, peak RSS nullable, index size và provenance.
 - [ ] Real baseline metrics chưa có; chờ labeled queries, encoder đã xác minh và runtime Kaggle.
@@ -77,9 +79,9 @@ Dùng vài prompt templates cố định, audit được; không tạo agent. Ca
 
 ## Verification State
 
-- Local: full suite `76` tests pass; raw-text tests mock tokenizer/model nên không download Hugging Face; vector-only CLI compatibility và query non-serialization đều pass.
-- Verification: `compileall`, Python 3.10 AST parse trên `28` files và `git diff --check` pass. Deterministic source bundle build hai lần cùng SHA-256 `3e7e52e1580de01e4538303fd062c799ccfdc25e59735f0fcc04e70387cb32d6`.
-- Kaggle evidence hiện có: image features empirically match `openai/clip-vit-base-patch32`; exact index verified; English manual smoke khoảng 9/10 relevant. Repository CLI còn chờ xác nhận `_commit_hash`, ranked-output comparison, real Textual KIS labels, held-out metrics và full latency/RSS profile.
+- Local Request 1 contracts/tests cover bounded planning, auxiliary-list recall, RRF, temporal alignment, OCR normalization/artifact integrity, OCR-only candidate recovery, CLI fallback/privacy, private raw-text benchmark mode và source bundle inclusion.
+- Current branch verification must be refreshed after all integration/docs edits; historical test counts/checksums are not current evidence.
+- Kaggle evidence hiện có chỉ đủ cho image-feature/index compatibility và old manual smoke. B0–B3 locked held-out metrics, PaddleOCR T4 compatibility, full latency/RAM/VRAM profile và exact target ground truth vẫn pending. Không claim accuracy improvement trước các gate này.
 
 ## Risk Assessment
 

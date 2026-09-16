@@ -36,4 +36,12 @@ outputKaggle/
 *.pth
 *.ckpt
 *.safetensors
+# Private rehearsal queries and generated official submissions.
+THUNGHIEM-bo-de-thi/
+SOTUYEN1-bo-de-thi/
+*-bo-de-thi/
+submission/
+aic-submission/
+submission-*.json
 *.zip
+
